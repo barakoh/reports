@@ -168,6 +168,37 @@
         .alt-table tr:last-child td { border-bottom: none; }
         .badge-rec { display: inline-block; background: var(--positive-bg); color: var(--positive); font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-right: 6px; }
 
+        /* Pension Info Box Styles */
+        .pension-info-box { margin: 16px; background: var(--bg-subtle); border-radius: 12px; border: 1px solid var(--border-light); overflow: hidden; }
+        .pension-section-header { font-size: 11px; font-weight: 700; color: var(--text-secondary); padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--border-light); text-transform: uppercase; letter-spacing: 0.5px; }
+        .pension-grid { display: grid; grid-template-columns: repeat(4, 1fr); }
+        .pension-grid-item { padding: 16px; text-align: center; border-left: 1px solid var(--border-light); }
+        .pension-grid-item:last-child { border-left: none; }
+        .pension-grid-item.highlight { background: linear-gradient(to bottom right, var(--bg-subtle), #dbeafe); }
+        .pension-grid-item .label { font-size: 10px; color: var(--text-secondary); margin-bottom: 4px; }
+        .pension-grid-item .value { font-size: 18px; font-weight: 800; color: var(--color-pension); }
+        .pension-grid-item .value.normal { color: var(--text-main); font-size: 16px; }
+        .pension-grid-item .value .unit { font-size: 10px; font-weight: 400; color: var(--text-light); }
+        .pension-grid-item .sub { font-size: 9px; color: var(--text-light); margin-top: 4px; }
+
+        /* Insurance Track Accordion */
+        .insurance-track-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #fff; cursor: pointer; border-top: 1px solid var(--border-light); transition: background 0.2s; }
+        .insurance-track-header:hover { background: var(--bg-subtle); }
+        .insurance-track-header .track-info { display: flex; align-items: center; gap: 8px; }
+        .insurance-track-header .track-info i { color: var(--text-light); font-size: 14px; }
+        .insurance-track-header .track-label { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; }
+        .insurance-track-header .track-code { font-size: 10px; color: var(--text-light); margin-right: 8px; }
+        .insurance-track-header .track-cost { font-size: 12px; color: var(--text-secondary); }
+        .insurance-track-header .track-cost span { font-weight: 700; color: var(--text-main); }
+        .insurance-track-header .chevron-small { transition: transform 0.2s; }
+        .insurance-track-header .chevron-small.open { transform: rotate(180deg); }
+        .insurance-track-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; background: var(--bg-subtle); }
+        .insurance-track-body.open { max-height: 500px; }
+        .insurance-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border-light); }
+        .insurance-grid .pension-grid-item { border-bottom: none; }
+        .insurance-footer { padding: 10px 16px; background: #fff; border-top: 1px solid var(--border-light); font-size: 10px; color: var(--text-secondary); display: flex; gap: 16px; flex-wrap: wrap; }
+        .insurance-footer span { font-weight: 700; color: var(--text-main); }
+
         .floating-footer { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #fff; padding: 10px 10px; border-radius: 50px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); display: flex; gap: 8px; z-index: 100; border: 1px solid var(--border-light); }
         .btn { border: none; padding: 10px 24px; border-radius: 24px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 8px; }
         .btn-ghost { background: transparent; color: var(--text-secondary); }
@@ -420,21 +451,73 @@
         const portfolioData = {
             'פנסיה': [
                 {
-                    companyName: 'מיטב',
-                    productName: 'קרן פנסיה מקיפה',
-                    productNumber: '123456',
-                    totalAccumulation: 450000,
+                    companyName: 'הפניקס',
+                    productName: 'הפניקס פנסיה מקיפה',
+                    productNumber: '1939871081',
+                    totalAccumulation: 915494,
+                    // Pension-specific data
+                    pensionData: {
+                        forecasts: {
+                            retirementPension: 15186,  // קצבת זקנה צפויה
+                            retirementAge: 67,
+                            disabilityPension: 14159,  // קצבת נכות
+                            disabilityCoverage: 75,    // אחוז כיסוי נכות
+                            survivorsPension: 11328,   // קצבת שאירים
+                            survivorsCoverage: 60,     // אחוז לבן/בת זוג
+                            orphanPension: 7552,       // קצבת יתום
+                            orphanCoverage: 40         // אחוז כיסוי
+                        },
+                        deposits: {
+                            insuredSalary: 18879,      // שכר מבוטח
+                            lastDeposit: 3016,         // הפקדה אחרונה
+                            lastDepositDate: '2025-11',
+                            accumulationFee: 0.10,     // דמי ניהול מצבירה
+                            depositFee: 1.7            // דמי ניהול מהפקדה
+                        },
+                        insuranceTrack: {
+                            code: 115,
+                            totalMonthlyCost: 383,
+                            disabilityCost: 283.85,
+                            survivorsCost: 41.20,
+                            combinedCost: 57.88,
+                            retirementAge: 67
+                        }
+                    },
                     tracks: [
                         {
-                            trackName: 'מסלול כללי',
+                            trackName: 'פנסיה מקיפה מניות',
                             trackId: '5001',
-                            trackAccumulation: 450000,
-                            marketData: { ytdYield: 9.2, stockExposure: 70, return3Y: 28.5 },
+                            trackAccumulation: 388883,
+                            marketData: { ytdYield: 12.3, stockExposure: 65, return3Y: 28.5 },
                             hasAlert: true,
                             top3Alternatives: [
-                                { name: 'מסלול מניות', yield: 12.5, exposure: 75, efficiency: 1.67 },
-                                { name: 'מסלול צמיחה', yield: 11.2, exposure: 72, efficiency: 1.56 }
+                                { name: 'מסלול מניות פלוס', yield: 14.5, exposure: 70, efficiency: 2.07 },
+                                { name: 'מסלול צמיחה', yield: 13.2, exposure: 68, efficiency: 1.94 }
                             ]
+                        },
+                        {
+                            trackName: 'עוקב מדדי מניות',
+                            trackId: '5002',
+                            trackAccumulation: 179626,
+                            marketData: { ytdYield: 14.2, stockExposure: 80, return3Y: 32.1 },
+                            hasAlert: false,
+                            top3Alternatives: []
+                        },
+                        {
+                            trackName: 'עוקב מדד S&P 500',
+                            trackId: '5003',
+                            trackAccumulation: 175494,
+                            marketData: { ytdYield: 15.1, stockExposure: 95, return3Y: 35.8 },
+                            hasAlert: false,
+                            top3Alternatives: []
+                        },
+                        {
+                            trackName: 'עוקב מדדים גמיש',
+                            trackId: '5004',
+                            trackAccumulation: 171492,
+                            marketData: { ytdYield: 9.8, stockExposure: 50, return3Y: 22.4 },
+                            hasAlert: false,
+                            top3Alternatives: []
                         }
                     ]
                 }
@@ -582,6 +665,109 @@
             }
         }
 
+        function toggleInsuranceTrack(id) {
+            const el = document.getElementById(id);
+            const chevron = document.getElementById('chevron-ins-' + id);
+            if (el) el.classList.toggle('open');
+            if (chevron) chevron.classList.toggle('open');
+        }
+
+        function renderPensionInfoBox(product, prodId) {
+            if (!product.pensionData) return '';
+
+            const pd = product.pensionData;
+            const f = pd.forecasts;
+            const d = pd.deposits;
+            const ins = pd.insuranceTrack;
+            const insId = prodId + '-insurance';
+
+            return `
+                <div class="pension-info-box">
+                    <!-- Forecasts and Coverage -->
+                    <div class="pension-section-header">תחזיות וכיסויים</div>
+                    <div class="pension-grid">
+                        <div class="pension-grid-item highlight">
+                            <div class="label">קצבת זקנה צפויה</div>
+                            <div class="value">${formatCurrency(f.retirementPension)}<span class="unit">/חודש</span></div>
+                            <div class="sub">בגיל ${f.retirementAge}</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">קצבת נכות</div>
+                            <div class="value normal">${formatCurrency(f.disabilityPension)}<span class="unit">/חודש</span></div>
+                            <div class="sub">${f.disabilityCoverage}% כיסוי</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">קצבת שאירים</div>
+                            <div class="value normal">${formatCurrency(f.survivorsPension)}<span class="unit">/חודש</span></div>
+                            <div class="sub">${f.survivorsCoverage}% לבן/בת זוג</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">קצבת יתום</div>
+                            <div class="value normal">${formatCurrency(f.orphanPension)}<span class="unit">/חודש</span></div>
+                            <div class="sub">${f.orphanCoverage}% כיסוי</div>
+                        </div>
+                    </div>
+
+                    <!-- Deposits and Fees -->
+                    <div class="pension-section-header">פרטי הפקדות ועמלות</div>
+                    <div class="pension-grid">
+                        <div class="pension-grid-item">
+                            <div class="label">שכר מבוטח</div>
+                            <div class="value normal">${formatCurrency(d.insuredSalary)}</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">הפקדה אחרונה</div>
+                            <div class="value normal">${formatCurrency(d.lastDeposit)}</div>
+                            <div class="sub">${d.lastDepositDate}</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">דמי ניהול מצבירה</div>
+                            <div class="value normal">${d.accumulationFee}%</div>
+                        </div>
+                        <div class="pension-grid-item">
+                            <div class="label">דמי ניהול מהפקדה</div>
+                            <div class="value normal">${d.depositFee}%</div>
+                        </div>
+                    </div>
+
+                    <!-- Insurance Track Accordion -->
+                    <div class="insurance-track-header" onclick="toggleInsuranceTrack('${insId}'); event.stopPropagation();">
+                        <div class="track-info">
+                            <i class="fas fa-shield-alt"></i>
+                            <span class="track-label">מסלול ביטוח</span>
+                            <span class="track-code">קוד ${ins.code}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span class="track-cost">עלות חודשית: <span>${formatCurrency(ins.totalMonthlyCost)}</span></span>
+                            <i id="chevron-ins-${insId}" class="fas fa-chevron-down chevron-small"></i>
+                        </div>
+                    </div>
+                    <div id="${insId}" class="insurance-track-body">
+                        <div class="insurance-grid">
+                            <div class="pension-grid-item">
+                                <div class="label">עלות כיסוי נכות</div>
+                                <div class="value normal">${formatCurrency(ins.disabilityCost)}</div>
+                                <div class="sub">לחודש</div>
+                            </div>
+                            <div class="pension-grid-item">
+                                <div class="label">עלות כיסוי שאירים</div>
+                                <div class="value normal">${formatCurrency(ins.survivorsCost)}</div>
+                                <div class="sub">לחודש</div>
+                            </div>
+                            <div class="pension-grid-item">
+                                <div class="label">כיסוי משולב</div>
+                                <div class="value normal">${formatCurrency(ins.combinedCost)}</div>
+                                <div class="sub">לחודש</div>
+                            </div>
+                        </div>
+                        <div class="insurance-footer">
+                            גיל פרישה: <span>${ins.retirementAge}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function scrollToReport() {
             document.getElementById('detailed-report').scrollIntoView({ behavior: 'smooth' });
         }
@@ -683,7 +869,9 @@
                                 <i id="chevron-${prodId}" class="chevron"></i>
                             </div>
                             <div id="${prodId}" class="accordion-body">
+                                ${cat === 'פנסיה' ? renderPensionInfoBox(product, prodId) : ''}
                                 <div class="track-container">
+                                    <div class="pension-section-header" style="margin: 0 -24px 12px -24px; padding: 10px 24px;">מסלולי השקעה</div>
                         `;
 
                         product.tracks.forEach((track, tIdx) => {
