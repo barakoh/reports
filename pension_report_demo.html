@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>דוח פנסיה - תצוגה מקדימה</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-slate-100 p-6">
+    <div class="max-w-3xl mx-auto">
+        <h1 class="text-2xl font-bold text-slate-800 mb-6">תצוגה מקדימה - תיבת מידע פנסיוני</h1>
+        
+        <!-- Simulated Product Card -->
+        <div class="bg-white rounded-2xl shadow-lg overflow-hidden">
+            <!-- Product Header -->
+            <div class="p-4 flex items-center justify-between bg-gradient-to-l from-slate-50 to-white border-b border-slate-100">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm" style="background: #f97316">הפ</div>
+                    <div>
+                        <div class="font-bold text-slate-900">הפניקס פנסיה מקיפה</div>
+                        <div class="text-xs text-slate-500">הפניקס | קופה 1939871081 | 4 מסלולים</div>
+                    </div>
+                </div>
+                <div class="text-left">
+                    <div class="text-lg font-black text-slate-900">₪915,494</div>
+                    <div class="text-sm font-bold text-emerald-600">+11.08%</div>
+                </div>
+            </div>
+            
+            <!-- Pension Info Box with Accordion -->
+            <div class="mx-4 mt-4 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
+                <div class="text-[11px] font-bold text-slate-500 px-4 py-2 bg-white border-b border-slate-100 uppercase tracking-wide">תחזיות וכיסויים</div>
+                <div class="grid grid-cols-4 divide-x divide-slate-200 divide-x-reverse">
+                    <div class="p-4 text-center bg-gradient-to-br from-slate-50 to-blue-50">
+                        <div class="text-[10px] text-slate-500 mb-1">קצבת זקנה צפויה</div>
+                        <div class="text-lg font-black text-blue-700">₪15,186<span class="text-[10px] font-normal text-slate-400">/חודש</span></div>
+                        <div class="text-[9px] text-slate-400 mt-1">בגיל 67</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">קצבת נכות</div>
+                        <div class="text-base font-bold text-slate-800">₪14,159<span class="text-[10px] font-normal text-slate-400">/חודש</span></div>
+                        <div class="text-[9px] text-slate-400 mt-1">75% כיסוי</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">קצבת שאירים</div>
+                        <div class="text-base font-bold text-slate-800">₪11,328<span class="text-[10px] font-normal text-slate-400">/חודש</span></div>
+                        <div class="text-[9px] text-slate-400 mt-1">60% לבן/בת זוג</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">קצבת יתום</div>
+                        <div class="text-base font-bold text-slate-800">₪7,552<span class="text-[10px] font-normal text-slate-400">/חודש</span></div>
+                        <div class="text-[9px] text-slate-400 mt-1">40% כיסוי</div>
+                    </div>
+                </div>
+                <div class="text-[11px] font-bold text-slate-500 px-4 py-2 bg-white border-y border-slate-100 uppercase tracking-wide">פרטי הפקדות ועמלות</div>
+                <div class="grid grid-cols-4 divide-x divide-slate-200 divide-x-reverse">
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">שכר מבוטח</div>
+                        <div class="text-base font-bold text-slate-800">₪18,879</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">הפקדה אחרונה</div>
+                        <div class="text-base font-bold text-slate-800">₪3,016</div>
+                        <div class="text-[9px] text-slate-400 mt-1">2025-11</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">דמי ניהול מצבירה</div>
+                        <div class="text-base font-bold text-slate-800">0.10%</div>
+                    </div>
+                    <div class="p-4 text-center">
+                        <div class="text-[10px] text-slate-500 mb-1">דמי ניהול מהפקדה</div>
+                        <div class="text-base font-bold text-slate-800">1.7%</div>
+                    </div>
+                </div>
+                
+                <!-- Insurance Track Accordion -->
+                <div class="border-t border-slate-200">
+                    <div onclick="document.getElementById('insurance-acc').classList.toggle('hidden'); document.getElementById('insurance-arrow').classList.toggle('rotate-180');" 
+                         class="flex items-center justify-between px-4 py-3 bg-white cursor-pointer hover:bg-slate-50 transition-colors">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-shield-alt text-slate-400 text-sm"></i>
+                            <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">מסלול ביטוח</span>
+                            <span class="text-[10px] text-slate-400">קוד 115</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-slate-500">עלות חודשית: <span class="font-bold text-slate-700">₪383</span></span>
+                            <i id="insurance-arrow" class="fas fa-chevron-down text-slate-400 text-xs transition-transform duration-200"></i>
+                        </div>
+                    </div>
+                    <div id="insurance-acc" class="hidden bg-slate-50 border-t border-slate-100">
+                        <div class="grid grid-cols-3 divide-x divide-slate-200 divide-x-reverse">
+                            <div class="p-4 text-center">
+                                <div class="text-[10px] text-slate-500 mb-1">עלות כיסוי נכות</div>
+                                <div class="text-base font-bold text-slate-800">₪283.85</div>
+                                <div class="text-[9px] text-slate-400">לחודש</div>
+                            </div>
+                            <div class="p-4 text-center">
+                                <div class="text-[10px] text-slate-500 mb-1">עלות כיסוי שאירים</div>
+                                <div class="text-base font-bold text-slate-800">₪41.20</div>
+                                <div class="text-[9px] text-slate-400">לחודש</div>
+                            </div>
+                            <div class="p-4 text-center">
+                                <div class="text-[10px] text-slate-500 mb-1">כיסוי משולב</div>
+                                <div class="text-base font-bold text-slate-800">₪57.88</div>
+                                <div class="text-[9px] text-slate-400">לחודש</div>
+                            </div>
+                        </div>
+                        <div class="px-4 py-3 bg-white border-t border-slate-100 flex flex-wrap gap-3 text-[10px]">
+                            <span class="text-slate-500">גיל פרישה: <span class="font-bold text-slate-700">67</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Tracks -->
+            <div class="bg-white border-t border-gray-100 px-4 py-4 space-y-3 mt-4">
+                <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">מסלולי השקעה</div>
+                <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-semibold text-slate-800">פנסיה מקיפה מניות</div>
+                            <div class="text-sm text-slate-500">₪388,883</div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-emerald-600">+12.3%</div>
+                                <div class="text-[10px] text-slate-400">תשואה YTD</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-slate-700">65%</div>
+                                <div class="text-[10px] text-slate-400">חשיפה</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-semibold text-slate-800">עוקב מדדי מניות</div>
+                            <div class="text-sm text-slate-500">₪179,626</div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-emerald-600">+14.2%</div>
+                                <div class="text-[10px] text-slate-400">תשואה YTD</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-slate-700">80%</div>
+                                <div class="text-[10px] text-slate-400">חשיפה</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-semibold text-slate-800">עוקב מדד S&P 500</div>
+                            <div class="text-sm text-slate-500">₪175,494</div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-emerald-600">+15.1%</div>
+                                <div class="text-[10px] text-slate-400">תשואה YTD</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-slate-700">95%</div>
+                                <div class="text-[10px] text-slate-400">חשיפה</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-semibold text-slate-800">עוקב מדדים גמיש</div>
+                            <div class="text-sm text-slate-500">₪171,492</div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-emerald-600">+9.8%</div>
+                                <div class="text-[10px] text-slate-400">תשואה YTD</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-sm font-bold text-slate-700">50%</div>
+                                <div class="text-[10px] text-slate-400">חשיפה</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <p class="text-center text-slate-500 text-sm mt-6">לחץ על "מסלול ביטוח" כדי לפתוח/לסגור את האקורדיון</p>
+    </div>
+</body>
+</html>
