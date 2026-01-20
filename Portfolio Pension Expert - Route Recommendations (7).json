@@ -518,7 +518,7 @@
       "main": [
         [
           {
-            "node": "Wait For Both Reports",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -537,37 +537,7 @@
       ]
     },
     "Format Insurance Report": {
-      "main": [
-        [
-          {
-            "node": "Wait For Both Reports",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Wait For Both Reports": {
-      "main": [
-        [
-          {
-            "node": "Merge Reports",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Reports": {
-      "main": [
-        [
-          {
-            "node": "Respond",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": []
     }
   },
   "active": false,
