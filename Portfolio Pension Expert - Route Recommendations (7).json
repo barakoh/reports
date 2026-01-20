@@ -305,7 +305,9 @@
       ]
     },
     {
-      "parameters": {},
+      "parameters": {
+        "mode": "append"
+      },
       "id": "cb387fe6-e782-4529-8a79-b240ace99b69",
       "name": "Wait For Both Reports",
       "type": "n8n-nodes-base.merge",
@@ -323,11 +325,6 @@
         [
           {
             "node": "Parse Portfolio + Alerts",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Format Insurance Report",
             "type": "main",
             "index": 0
           }
@@ -508,6 +505,11 @@
             "node": "Format HTML Report",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Format Insurance Report",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -516,7 +518,7 @@
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Wait For Both Reports",
             "type": "main",
             "index": 0
           }
@@ -528,6 +530,39 @@
         [
           {
             "node": "Merge Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Insurance Report": {
+      "main": [
+        [
+          {
+            "node": "Wait For Both Reports",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Wait For Both Reports": {
+      "main": [
+        [
+          {
+            "node": "Merge Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Reports": {
+      "main": [
+        [
+          {
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
