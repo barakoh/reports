@@ -218,7 +218,9 @@
       ]
     },
     {
-      "parameters": {},
+      "parameters": {
+        "numberInputs": 3
+      },
       "id": "62695fdb-314b-4937-9844-b804f61703dc",
       "name": "Merge Market Data",
       "type": "n8n-nodes-base.merge",
