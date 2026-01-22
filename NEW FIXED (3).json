@@ -1,0 +1,495 @@
+{
+  "name": "Portfolio Pension Expert - NEW FIXED",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pension-expert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "74536984-fd10-4bd9-9df9-dc9af5ab1449",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        -48
+      ],
+      "webhookId": "pension-expert-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== PARSE PORTFOLIO + BUILD FILTERED API CALLS =====\n// גרסה מתוקנת - קודי מוצרים אחידים + ביטוח נט\n\n// === הגדרות קבועות ===\nconst BLACKLIST = ['ילין לפידות', 'אינפיניטי'];\n\n// קודי מוצרים - הגדרה אחידה לכל המודולים\nconst PRODUCT_CODES = {\n  PENSION: [1, 2, 19],           // קרנות פנסיה\n  GEMEL: [3, 5, 6],              // קופות גמל רגילות\n  GEMEL_INVEST: [4],             // גמל להשקעה\n  HISHTALMUT: [7],               // קרנות השתלמות\n  SAVINGS: [41],                 // פוליסות חיסכון\n  INSURANCE: [13, 14, 15]        // ביטוח מנהלים\n};\n\n// Resource IDs ב-data.gov.il\nconst GEMELNET_RESOURCE = 'a30dcbea-a1d2-482c-ae29-8f781f5025fb';\nconst PENSIANET_RESOURCE = '6d47d6b5-cb08-488b-b333-f1e717b1e1bd';\nconst BITUACHNET_RESOURCE = 'c6c62cc7-fe02-4b18-8f3e-813abfbb4647';\nconst DATA_GOV_BASE = 'https://data.gov.il/api/3/action/datastore_search';\n\n// === פונקציות עזר ===\nfunction getProductTypeName(code) {\n  const types = {\n    1: 'קרן פנסיה', 2: 'קרן פנסיה', 19: 'קרן פנסיה',\n    3: 'קופת גמל', 4: 'גמל להשקעה', 5: 'קופת גמל', 6: 'קופת גמל',\n    7: 'קרן השתלמות',\n    13: 'ביטוח מנהלים', 14: 'ביטוח מנהלים', 15: 'ביטוח מנהלים',\n    41: 'פוליסת חיסכון'\n  };\n  return types[code] || 'לא ידוע';\n}\n\nfunction getProductCategory(code) {\n  if (PRODUCT_CODES.PENSION.includes(code)) return 'pension';\n  if (PRODUCT_CODES.GEMEL.includes(code)) return 'gemel';\n  if (PRODUCT_CODES.GEMEL_INVEST.includes(code)) return 'gemel_invest';\n  if (PRODUCT_CODES.HISHTALMUT.includes(code)) return 'hishtalmut';\n  if (PRODUCT_CODES.SAVINGS.includes(code)) return 'savings';\n  if (PRODUCT_CODES.INSURANCE.includes(code)) return 'insurance';\n  return 'other';\n}\n\nfunction getProductBadgeClass(code) {\n  if (PRODUCT_CODES.PENSION.includes(code)) return 'badge-pension';\n  if (PRODUCT_CODES.HISHTALMUT.includes(code)) return 'badge-hishtalmut';\n  if (PRODUCT_CODES.GEMEL.includes(code) || PRODUCT_CODES.GEMEL_INVEST.includes(code)) return 'badge-gemel';\n  if (PRODUCT_CODES.INSURANCE.includes(code)) return 'badge-insurance';\n  if (PRODUCT_CODES.SAVINGS.includes(code)) return 'badge-savings';\n  return '';\n}\n\nfunction getStatusInfo(product) {\n  const status = product.status || product.maamad?.status;\n  if (!status) return { code: 0, description: 'לא ידוע' };\n  return {\n    code: status.code || 0,\n    description: status.description || (status.code === 1 ? 'פעיל' : 'לא פעיל')\n  };\n}\n\nfunction getEmploymentStatus(code) {\n  return code === 1 ? 'שכיר' : 'עצמאי';\n}\n\n// האם צריך לפנות לגמל-נט?\nfunction needsGemelNet(typeCode) {\n  return PRODUCT_CODES.GEMEL.includes(typeCode) || \n         PRODUCT_CODES.GEMEL_INVEST.includes(typeCode) || \n         PRODUCT_CODES.HISHTALMUT.includes(typeCode);\n}\n\n// האם צריך לפנות לפנסיה-נט?\nfunction needsPensionNet(typeCode) {\n  return PRODUCT_CODES.PENSION.includes(typeCode);\n}\n\n// האם צריך לפנות לביטוח-נט? (פוליסות חיסכון בלבד - קוד 41)\nfunction needsBituachNet(typeCode) {\n  return PRODUCT_CODES.SAVINGS.includes(typeCode);\n}\n\n// בניית URL - סינון לפי FUND_ID (הקוד מ-Surense)\nfunction buildFilteredUrl(trackCode, resourceId) {\n  const filters = { FUND_ID: String(trackCode) };\n  return DATA_GOV_BASE + '?resource_id=' + resourceId + '&filters=' + encodeURIComponent(JSON.stringify(filters)) + '&sort=REPORT_PERIOD%20desc&limit=1';\n}\n\nfunction daysDiff(dateStr) {\n  if (!dateStr) return 999;\n  const date = new Date(dateStr);\n  const currentDate = new Date();\n  return Math.floor((currentDate - date) / (1000 * 60 * 60 * 24));\n}\n\n// === עיבוד הנתונים ===\nconst inputData = $input.first().json;\nconst shuranceData = inputData.body || inputData;\nconst products = shuranceData.body?.products || shuranceData.products || [];\n\nconst portfolioItems = [];\nconst criticalAlerts = [];\nconst productTypesSet = new Set();\nconst gemelApiCalls = [];\nconst pensionApiCalls = [];\nconst bituachApiCalls = [];\nconst processedTracks = new Set();\n\nconst customerInfo = {\n  customerName: shuranceData.customerName || 'לקוח',\n  age: shuranceData.age || null,\n  employmentStatus: null,\n  address: shuranceData.address || '',\n  phone: shuranceData.phone || '',\n  email: shuranceData.email || ''\n};\n\nconst currentDate = new Date();\n\n// עיבוד כל מוצר\nfor (const product of products) {\n  const productTypeCode = product.type?.code;\n  const productType = getProductTypeName(productTypeCode);\n  const productCategory = getProductCategory(productTypeCode);\n  const badgeClass = getProductBadgeClass(productTypeCode);\n  const statusInfo = getStatusInfo(product);\n  const employmentStatus = getEmploymentStatus(product.maamad?.code);\n  const companyName = product.companyName || '';\n  const fundCode = product.misparMemHei || null;\n  \n  if (productTypeCode) productTypesSet.add(productTypeCode);\n  if (!customerInfo.employmentStatus) customerInfo.employmentStatus = employmentStatus;\n  \n  // === התראות קריטיות ===\n  \n  // ריסק זמני - קרן פנסיה במצב לא פעיל\n  if (PRODUCT_CODES.PENSION.includes(productTypeCode) && statusInfo.code === 2) {\n    criticalAlerts.push({\n      severity: 'CRITICAL',\n      type: 'RISK_STATUS',\n      productName: product.shemTohnit || productType,\n      productNumber: product.accountPolicyNumber || '',\n      message: '🚨 קרן הפנסיה \"' + (product.shemTohnit || productType) + '\" במצב ריסק זמני!',\n      action: 'נדרש טיפול מיידי - לבדוק מול המעסיק'\n    });\n  }\n  \n  // הפקדות חסרות - יותר מ-60 יום (רק לפנסיה, לא להשתלמות)\n  if (employmentStatus === 'שכיר' && PRODUCT_CODES.PENSION.includes(productTypeCode)) {\n    const lastDeposit = product.lastDeposit?.hafkadot?.[0];\n    if (lastDeposit && lastDeposit.taarihEreh) {\n      const daysGap = daysDiff(lastDeposit.taarihEreh);\n      if (daysGap >= 60) {\n        criticalAlerts.push({\n          severity: 'HIGH',\n          type: 'MISSING_DEPOSITS',\n          productName: product.shemTohnit || productType,\n          productNumber: product.accountPolicyNumber || '',\n          lastDeposit: lastDeposit.taarihEreh,\n          daysGap: daysGap,\n          message: '⚠️ לא התקבלה הפקדה ב-\"' + (product.shemTohnit || productType) + '\" מאז ' + lastDeposit.taarihEreh + ' (' + daysGap + ' ימים)',\n          action: 'יש לבדוק מול המעסיק'\n        });\n      }\n    }\n  }\n  \n  // === עיבוד מסלולים ===\n  if (product.masluleiAshkaa && product.masluleiAshkaa.length > 0) {\n    for (const maslul of product.masluleiAshkaa) {\n      const trackCode = maslul.code;\n      \n      // בניית קריאות API - רק אם לא עובד כבר\n      if (trackCode && !processedTracks.has(String(trackCode))) {\n        processedTracks.add(String(trackCode));\n        \n        if (needsGemelNet(productTypeCode)) {\n          gemelApiCalls.push({\n            trackCode: String(trackCode),\n            trackName: maslul.name,\n            companyName: companyName,\n            productType: productType,\n            productTypeCode: productTypeCode,\n            apiUrl: buildFilteredUrl(trackCode, GEMELNET_RESOURCE)\n          });\n        } else if (needsPensionNet(productTypeCode)) {\n          pensionApiCalls.push({\n            trackCode: String(trackCode),\n            trackName: maslul.name,\n            companyName: companyName,\n            productType: productType,\n            productTypeCode: productTypeCode,\n            apiUrl: buildFilteredUrl(trackCode, PENSIANET_RESOURCE)\n          });\n        } else if (needsBituachNet(productTypeCode)) {\n          bituachApiCalls.push({\n            trackCode: String(trackCode),\n            trackName: maslul.name,\n            companyName: companyName,\n            productType: productType,\n            productTypeCode: productTypeCode,\n            apiUrl: buildFilteredUrl(trackCode, BITUACHNET_RESOURCE)\n          });\n        }\n      }\n      \n      // הוספה לרשימת הפריטים\n      portfolioItems.push({\n        fundCode,\n        trackCode,\n        productTypeCode,\n        productType,\n        productCategory,\n        productBadgeClass: badgeClass,\n        productName: product.shemTohnit || productType,\n        productNumber: product.accountPolicyNumber || '',\n        companyId: product.companyId || 0,\n        companyName,\n        trackName: maslul.name,\n        trackAccumulation: maslul.accumulation || 0,\n        trackPercent: Math.round((maslul.accumulation / (product.accumulation || 1)) * 100) || 0,\n        productAccumulation: product.accumulation || 0,\n        accumulationFee: (product.accumulationFee || 0) * 100,\n        depositFee: (product.depositFee || 0) * 100,\n        ytdReturnPercent: ((maslul.netReturnPercentStartYear ?? product.netReturnPercentStartYear) || 0) * 100,\n        ytdReturnAmount: product.netReturnAmountStartYear || 0,\n        statusCode: statusInfo.code,\n        statusDescription: statusInfo.description,\n        employmentStatus,\n        lastDepositDate: product.lastDeposit?.hafkadot?.[0]?.taarihEreh || null,\n        lastDepositMonth: product.lastDeposit?.hafkadot?.[0]?.month || null,\n        lastDepositAmount: product.lastDeposit?.hafkadot?.[0]?.total || 0,\n        salary: product.maamad?.salary || 0,\n        employerName: product.lastDeposit?.hafkadot?.[0]?.shemMaasik || ''\n      });\n    }\n  }\n}\n\n// === סיכום סטטיסטי ===\nconst productTypes = Array.from(productTypesSet);\n\nconst summaryStats = {\n  totalAccumulation: shuranceData.tzvira?.amount || 0,\n  projectedPension: shuranceData.kitzbaHazuyaKolelPremiot?.amount || 0,\n  ytdReturn: shuranceData.tsuaMithilatShana?.amount || 0,\n  monthlyDeposit: 0\n};\n\nfor (const product of products) {\n  if (product.lastDeposit?.hafkadot?.[0]) {\n    summaryStats.monthlyDeposit += product.lastDeposit.hafkadot[0].total || 0;\n  }\n}\n\n// === החזרת התוצאה ===\nreturn {\n  json: {\n    customerInfo,\n    portfolioItems,\n    summaryStats,\n    criticalAlerts,\n    productTypes,\n    needGemelNet: gemelApiCalls.length > 0,\n    needPensionNet: pensionApiCalls.length > 0,\n    needBituachNet: bituachApiCalls.length > 0,\n    gemelApiCalls,\n    pensionApiCalls,\n    bituachApiCalls,\n    blacklist: BLACKLIST,\n    // שומרים את הקודים לשימוש במודולים הבאים\n    productCodes: PRODUCT_CODES\n  }\n};"
+      },
+      "id": "79e50849-1b58-4bc6-9c65-97d4c2e43dcf",
+      "name": "Parse Portfolio + Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needGemelNet }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "bbc9d116-86ad-4bd5-a63b-6669aae48eca",
+      "name": "If Gemel Net Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        272,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needPensionNet }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "4cb2d34f-622e-4660-80d1-c95b875e8680",
+      "name": "If Pension Net Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        272,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needBituachNet }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "4c7e6530-3871-4486-9f1b-a4b979824756",
+      "name": "If Bituach Net Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        272,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פיצול קריאות גמל נט\nconst apiCalls = $('Parse Portfolio + Alerts').first().json.gemelApiCalls || [];\nreturn apiCalls.map(item => ({ json: item }));"
+      },
+      "id": "9fc38765-eaef-4c92-9384-ac084524364c",
+      "name": "Split Gemel Tracks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פיצול קריאות פנסיה נט\nconst apiCalls = $('Parse Portfolio + Alerts').first().json.pensionApiCalls || [];\nreturn apiCalls.map(item => ({ json: item }));"
+      },
+      "id": "8175f27c-a239-4471-9946-be9136b4c6b1",
+      "name": "Split Pension Tracks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פיצול קריאות ביטוח נט (פוליסות חיסכון בלבד - קוד 41)\nconst apiCalls = $('Parse Portfolio + Alerts').first().json.bituachApiCalls || [];\nreturn apiCalls.map(item => ({ json: item }));"
+      },
+      "id": "460e52ce-d7dd-4e47-b0d2-d7f217a11916",
+      "name": "Split Bituach Tracks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiUrl }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "743341f2-4b3a-479f-80ed-cb889cb89c41",
+      "name": "Gemel Net API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiUrl }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "33407373-e5fb-4afb-8b1c-46a227023d70",
+      "name": "Pension Net API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiUrl }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "faee6e63-a1af-4fbb-8054-23fb8d2a482a",
+      "name": "Bituach Net API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פרסור תוצאות גמל נט - סינון לפי FUND_ID\nconst results = [];\nconst splitItems = $('Split Gemel Tracks').all();\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const item = $input.all()[i];\n  const splitItem = splitItems[i]?.json || {};\n  const records = item.json?.result?.records || [];\n  \n  let stockExposure = null;\n  let yield3Y = null;\n  let ytdYield = null;\n  let fundClassification = null;\n  let managingCorp = null;\n  let mgmtFee = null;\n  let totalAssets = null;\n  let fundName = null;\n  let fundId = null;\n  let hasData = false;\n  \n  // ה-API מחזיר רשומה אחת (limit=1) ממוינת לפי REPORT_PERIOD desc\n  if (records.length > 0) {\n    const latest = records[0];\n    \n    // חישוב חשיפה מנייתית באחוזים\n    const exposure = parseFloat(latest.STOCK_MARKET_EXPOSURE || 0);\n    const assets = parseFloat(latest.TOTAL_ASSETS || 1);\n    if (assets > 0) stockExposure = (exposure / assets) * 100;\n    \n    yield3Y = parseFloat(latest.AVG_ANNUAL_YIELD_TRAILING_3YRS || 0);\n    ytdYield = parseFloat(latest.YEAR_TO_DATE_YIELD || 0);\n    fundClassification = latest.FUND_CLASSIFICATION || '';\n    managingCorp = latest.MANAGING_CORPORATION || '';\n    mgmtFee = parseFloat(latest.AVG_ANNUAL_MANAGEMENT_FEE || 0);\n    totalAssets = assets;\n    fundName = latest.FUND_NAME || '';\n    fundId = latest.FUND_ID;\n    hasData = true;\n  }\n  \n  results.push({\n    json: {\n      trackCode: String(splitItem.trackCode),\n      trackName: splitItem.trackName,\n      productTypeCode: splitItem.productTypeCode,\n      stockExposure,\n      yield3Y,\n      ytdYield,\n      fundClassification,\n      managingCorp,\n      fundName,\n      fundId,\n      mgmtFee,\n      totalAssets,\n      source: 'GEMELNET',\n      hasData: hasData\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "f259097a-0b4f-4277-a781-abfab3948a5d",
+      "name": "Parse Gemel Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פרסור תוצאות פנסיה נט - סינון לפי FUND_ID\nconst results = [];\nconst splitItems = $('Split Pension Tracks').all();\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const item = $input.all()[i];\n  const splitItem = splitItems[i]?.json || {};\n  const records = item.json?.result?.records || [];\n  \n  let stockExposure = null;\n  let yield3Y = null;\n  let ytdYield = null;\n  let fundClassification = null;\n  let managingCorp = null;\n  let mgmtFee = null;\n  let totalAssets = null;\n  let fundName = null;\n  let fundId = null;\n  let hasData = false;\n  \n  // ה-API מחזיר רשומה אחת (limit=1) ממוינת לפי REPORT_PERIOD desc\n  if (records.length > 0) {\n    const latest = records[0];\n    \n    // חישוב חשיפה מנייתית באחוזים\n    const exposure = parseFloat(latest.STOCK_MARKET_EXPOSURE || 0);\n    const assets = parseFloat(latest.TOTAL_ASSETS || 1);\n    if (assets > 0) stockExposure = (exposure / assets) * 100;\n    \n    yield3Y = parseFloat(latest.AVG_ANNUAL_YIELD_TRAILING_3YRS || 0);\n    ytdYield = parseFloat(latest.YEAR_TO_DATE_YIELD || 0);\n    fundClassification = latest.FUND_CLASSIFICATION || '';\n    managingCorp = latest.MANAGING_CORPORATION || '';\n    mgmtFee = parseFloat(latest.AVG_ANNUAL_MANAGEMENT_FEE || 0);\n    totalAssets = assets;\n    fundName = latest.FUND_NAME || '';\n    fundId = latest.FUND_ID;\n    hasData = true;\n  }\n  \n  results.push({\n    json: {\n      trackCode: String(splitItem.trackCode),\n      trackName: splitItem.trackName,\n      productTypeCode: splitItem.productTypeCode,\n      stockExposure,\n      yield3Y,\n      ytdYield,\n      fundClassification,\n      managingCorp,\n      fundName,\n      fundId,\n      mgmtFee,\n      totalAssets,\n      source: 'PENSIANET',\n      hasData: hasData\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "d2acef4a-cc99-4185-938e-4c6d541475db",
+      "name": "Parse Pension Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// פרסור תוצאות ביטוח נט - פוליסות חיסכון (קוד 41)\nconst results = [];\nconst splitItems = $('Split Bituach Tracks').all();\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const item = $input.all()[i];\n  const splitItem = splitItems[i]?.json || {};\n  const records = item.json?.result?.records || [];\n  \n  let stockExposure = null;\n  let yield3Y = null;\n  let ytdYield = null;\n  let fundClassification = null;\n  let managingCorp = null;\n  let mgmtFee = null;\n  let totalAssets = null;\n  let fundName = null;\n  let fundId = null;\n  let hasData = false;\n  \n  // ה-API מחזיר רשומה אחת (limit=1) ממוינת לפי REPORT_PERIOD desc\n  if (records.length > 0) {\n    const latest = records[0];\n    \n    // חישוב חשיפה מנייתית באחוזים\n    const exposure = parseFloat(latest.STOCK_MARKET_EXPOSURE || 0);\n    const assets = parseFloat(latest.TOTAL_ASSETS || 1);\n    if (assets > 0) stockExposure = (exposure / assets) * 100;\n    \n    yield3Y = parseFloat(latest.AVG_ANNUAL_YIELD_TRAILING_3YRS || 0);\n    ytdYield = parseFloat(latest.YEAR_TO_DATE_YIELD || 0);\n    fundClassification = latest.FUND_CLASSIFICATION || '';\n    managingCorp = latest.MANAGING_CORPORATION || '';\n    mgmtFee = parseFloat(latest.AVG_ANNUAL_MANAGEMENT_FEE || 0);\n    totalAssets = assets;\n    fundName = latest.FUND_NAME || '';\n    fundId = latest.FUND_ID;\n    hasData = true;\n  }\n  \n  results.push({\n    json: {\n      trackCode: String(splitItem.trackCode),\n      trackName: splitItem.trackName,\n      productTypeCode: splitItem.productTypeCode,\n      stockExposure,\n      yield3Y,\n      ytdYield,\n      fundClassification,\n      managingCorp,\n      fundName,\n      fundId,\n      mgmtFee,\n      totalAssets,\n      source: 'BITUACHNET',\n      hasData: hasData\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "b377e732-9a0c-47b9-8b20-66dd16c5302c",
+      "name": "Parse Bituach Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "dc8f7280-9053-45f0-9e39-c07ec3120e84",
+      "name": "Merge Market Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1184,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== ANALYZE PERFORMANCE + FILTER BLACKLIST =====\n// גרסה מתוקנת - לוגיקת המלצות: קודם מאותו יצרן, אחר כך מחברות אחרות\n\nconst portfolioData = $('Parse Portfolio + Alerts').first().json;\nconst marketDataInputs = $('Merge Market Data').all();\n\n// קודי מוצרים - אותם קודים כמו ב-Parse\nconst PRODUCT_CODES = portfolioData.productCodes || {\n  PENSION: [1, 2, 19],\n  GEMEL: [3, 5, 6],\n  GEMEL_INVEST: [4],\n  HISHTALMUT: [7],\n  SAVINGS: [41],\n  INSURANCE: [13, 14, 15]\n};\n\nconst APPROVED_COMPANIES = [\n  'מיטב גמל ופנסיה בע\"מ',\n  'אנליסט קופות גמל בע\"מ',\n  'מור גמל ופנסיה בע\"מ',\n  'מגדל מקפת קרנות פנסיה וקופות גמל בע\"מ',\n  'הראל פנסיה וגמל בע\"מ',\n  'הפניקס פנסיה וגמל בע\"מ',\n  'אלטשולר שחם גמל ופנסיה בע\"מ'\n];\n\nconst mergedData = marketDataInputs.map(item => item.json);\nconst BLACKLIST = portfolioData.blacklist || [];\nconst EXPOSURE_TOLERANCE = 15; // סבילות חשיפה באחוזים\nconst MIN_YIELD_IMPROVEMENT = 7; // שיפור מינימלי בתשואה להמלצה (באחוזים)\n\nconst analyzed = [];\nconst recommendations = [];\n\nfunction isApprovedCompany(companyName) {\n  if (!companyName) return false;\n  return APPROVED_COMPANIES.some(approved => \n    companyName.includes(approved) || approved.includes(companyName)\n  );\n}\n\nfunction isInBlacklist(companyName) {\n  if (!companyName) return false;\n  return BLACKLIST.some(b => companyName.includes(b));\n}\n\n// בדיקה אם שתי חברות הן אותה חברה\nfunction isSameCompany(company1, company2) {\n  if (!company1 || !company2) return false;\n  // נרמול שמות - הסרת מילים נפוצות והשוואה\n  const normalize = (name) => name.replace(/בע\"מ|גמל|פנסיה|קופות|קרנות|ו/g, '').trim();\n  const n1 = normalize(company1);\n  const n2 = normalize(company2);\n  return n1.includes(n2) || n2.includes(n1) || n1 === n2;\n}\n\n// עיבוד כל מסלול\nfor (const customerTrack of portfolioData.portfolioItems) {\n  const trackCode = customerTrack.trackCode;\n  const productTypeCode = customerTrack.productTypeCode;\n  \n  // חיפוש נתוני שוק למסלול הזה\n  const marketTrack = mergedData.find(m => String(m.trackCode) === String(trackCode));\n  \n  // אם אין נתוני שוק\n  if (!marketTrack || !marketTrack.hasData) {\n    analyzed.push({\n      ...customerTrack,\n      stockExposure: null,\n      marketData: null,\n      ranking: null,\n      alternatives: [],\n      sameCompanyAlternatives: [],\n      otherCompanyAlternatives: [],\n      status: 'NO_MARKET_DATA',\n      statusMessage: 'אין נתוני שוק זמינים למסלול זה'\n    });\n    continue;\n  }\n  \n  // נתוני שוק מה-API\n  const marketYtdYield = parseFloat(marketTrack.ytdYield || 0);\n  const return3Y = parseFloat(marketTrack.yield3Y || 0);\n  const fundClassification = marketTrack.fundClassification || '';\n  const managingCorp = marketTrack.managingCorp || '';\n  // דמי ניהול - מ-Surense בלבד!\n  const mgmtFee = parseFloat(customerTrack.accumulationFee || 0);\n  const totalAssets = parseFloat(marketTrack.totalAssets || 0);\n  const stockExposure = marketTrack.stockExposure;\n  \n  // תשואת הלקוח (מ-Surense)\n  const customerYtdYield = parseFloat(customerTrack.ytdReturnPercent || 0);\n  \n  // בניית רשימת כל המסלולים באותו סיווג להשוואה\n  const tracksInSameClassification = [];\n  for (const item of portfolioData.portfolioItems) {\n    const itemMarket = mergedData.find(m => String(m.trackCode) === String(item.trackCode));\n    if (!itemMarket || !itemMarket.hasData) continue;\n    \n    const mClassification = itemMarket.fundClassification || '';\n    const mCompany = itemMarket.managingCorp || '';\n    const mAssets = parseFloat(itemMarket.totalAssets || 0);\n    \n    // רק מסלולים באותו סיווג, מחברות מאושרות, עם נכסים מספיקים\n    if (\n      mClassification === fundClassification &&\n      isApprovedCompany(mCompany) &&\n      mAssets >= 50 // מיליוני ש\"ח\n    ) {\n      tracksInSameClassification.push({\n        fundId: item.trackCode,\n        ytdYield: parseFloat(itemMarket.ytdYield || 0),\n        exposure: itemMarket.stockExposure,\n        name: itemMarket.fundName || item.trackName || '',\n        company: mCompany,\n        return3Y: parseFloat(itemMarket.yield3Y || 0),\n        mgmtFee: parseFloat(itemMarket.mgmtFee || 0)\n      });\n    }\n  }\n  \n  // מיון לפי תשואה\n  const sortedByYield = tracksInSameClassification.sort((a, b) => b.ytdYield - a.ytdYield);\n  \n  // חישוב דירוג\n  const totalInCategory = sortedByYield.length;\n  const rankIndex = sortedByYield.findIndex(m => String(m.fundId) === String(trackCode));\n  const ranking = rankIndex >= 0 ? rankIndex + 1 : null;\n  \n  // חישוב ממוצע קטגוריה\n  const categorySum = sortedByYield.reduce((sum, m) => sum + m.ytdYield, 0);\n  const categoryAvg = totalInCategory > 0 ? categorySum / totalInCategory : 0;\n  const diffFromAvg = marketYtdYield - categoryAvg;\n  \n  // === לוגיקת המלצות חדשה ===\n  // שלב 1: מציאת חלופות מאותו יצרן (עדיפות ראשונה)\n  const sameCompanyAlternatives = sortedByYield\n    .filter(alt => {\n      const altCompany = alt.company || '';\n      const exposureMatch = stockExposure === null || \n                           alt.exposure === null ||\n                           Math.abs(alt.exposure - stockExposure) <= EXPOSURE_TOLERANCE;\n      \n      return (\n        String(alt.fundId) !== String(trackCode) && // לא אותו מסלול\n        isSameCompany(altCompany, managingCorp) &&   // אותו יצרן!\n        !isInBlacklist(altCompany) &&                // לא ב-Blacklist\n        (alt.ytdYield - marketYtdYield) >= MIN_YIELD_IMPROVEMENT && // שיפור מינימלי של 7%\n        exposureMatch                                 // חשיפה דומה\n      );\n    })\n    .map(alt => ({\n      fundId: alt.fundId,\n      fundName: alt.name || '',\n      company: alt.company || '',\n      ytdYield: alt.ytdYield,\n      return3Y: alt.return3Y,\n      exposure: alt.exposure,\n      mgmtFee: alt.mgmtFee,\n      improvement: alt.ytdYield - marketYtdYield,\n      ranking: sortedByYield.findIndex(m => m.fundId === alt.fundId) + 1,\n      sameCompany: true\n    }));\n  \n  // שלב 2: מציאת חלופות מחברות אחרות (רק אם אין מאותו יצרן)\n  const otherCompanyAlternatives = sortedByYield\n    .filter(alt => {\n      const altCompany = alt.company || '';\n      const exposureMatch = stockExposure === null || \n                           alt.exposure === null ||\n                           Math.abs(alt.exposure - stockExposure) <= EXPOSURE_TOLERANCE;\n      \n      return (\n        String(alt.fundId) !== String(trackCode) && // לא אותו מסלול\n        !isSameCompany(altCompany, managingCorp) &&  // לא אותו יצרן\n        !isInBlacklist(altCompany) &&                // לא ב-Blacklist\n        (alt.ytdYield - marketYtdYield) >= MIN_YIELD_IMPROVEMENT && // שיפור מינימלי של 7%\n        exposureMatch                                 // חשיפה דומה\n      );\n    })\n    .slice(0, 3) // עד 3 חלופות מחברות אחרות\n    .map(alt => ({\n      fundId: alt.fundId,\n      fundName: alt.name || '',\n      company: alt.company || '',\n      ytdYield: alt.ytdYield,\n      return3Y: alt.return3Y,\n      exposure: alt.exposure,\n      mgmtFee: alt.mgmtFee,\n      improvement: alt.ytdYield - marketYtdYield,\n      ranking: sortedByYield.findIndex(m => m.fundId === alt.fundId) + 1,\n      sameCompany: false\n    }));\n  \n  // === בניית רשימת החלופות הסופית ===\n  // אם יש חלופות מאותו יצרן - מציגים אותן קודם (עד 3)\n  // אם אין או יש פחות מ-3, משלימים מחברות אחרות\n  let alternatives = [];\n  \n  if (sameCompanyAlternatives.length > 0) {\n    // יש חלופות מאותו יצרן - מציגים אותן בעדיפות\n    alternatives = sameCompanyAlternatives.slice(0, 3);\n    // אם יש פחות מ-3, משלימים מחברות אחרות (אופציונלי)\n    // if (alternatives.length < 3) {\n    //   const remaining = 3 - alternatives.length;\n    //   alternatives = alternatives.concat(otherCompanyAlternatives.slice(0, remaining));\n    // }\n  } else {\n    // אין חלופות מאותו יצרן - מציגים מחברות אחרות\n    alternatives = otherCompanyAlternatives.slice(0, 3);\n  }\n  \n  // קביעת סטטוס\n  let status = 'OK';\n  let statusMessage = '';\n  \n  if (ranking && totalInCategory > 0) {\n    const percentile = (ranking / totalInCategory) * 100;\n    if (percentile <= 25) {\n      status = 'EXCELLENT';\n      statusMessage = 'המסלול שלך ברבעון העליון!';\n    } else if (percentile <= 50) {\n      status = 'GOOD';\n      statusMessage = 'המסלול שלך מעל הממוצע';\n    } else if (percentile <= 75) {\n      status = 'BELOW_AVG';\n      statusMessage = 'המסלול שלך מתחת לממוצע';\n    } else {\n      status = 'POOR';\n      statusMessage = 'המסלול שלך ברבעון התחתון';\n    }\n  }\n  \n  // הוספה לרשימה המנותחת\n  analyzed.push({\n    ...customerTrack,\n    stockExposure: stockExposure,\n    exposurePercent: stockExposure, // שמירה גם בשם הזה לתאימות\n    marketData: {\n      fundId: marketTrack.trackCode,\n      fundName: marketTrack.fundName || '',\n      company: managingCorp,\n      classification: fundClassification,\n      ytdYield: marketYtdYield, // תשואה מתחילת שנה - מה-API בלבד!\n      return3Y: return3Y, // תשואה 3 שנים - מה-API בלבד!\n      exposure: stockExposure, // חשיפה למניות - מה-API בלבד!\n      mgmtFee: mgmtFee,\n      assets: totalAssets\n    },\n    ranking: {\n      position: ranking,\n      total: totalInCategory,\n      categoryAvg: categoryAvg,\n      diffFromAvg: diffFromAvg,\n      percentile: ranking && totalInCategory ? Math.round((ranking / totalInCategory) * 100) : null\n    },\n    alternatives: alternatives,\n    status: status,\n    statusMessage: statusMessage\n  });\n  \n  // אם יש חלופות - הוסף להמלצות\n  if (alternatives.length > 0) {\n    recommendations.push({\n      forTrack: customerTrack.trackName,\n      forTrackCode: trackCode,\n      productType: customerTrack.productType,\n      productTypeCode: productTypeCode,\n      productCategory: customerTrack.productCategory,\n      accumulation: customerTrack.trackAccumulation,\n      currentYtdYield: marketYtdYield,\n      currentReturn3Y: return3Y,\n      currentExposure: stockExposure,\n      currentMgmtFee: mgmtFee,\n      company: managingCorp,\n      ranking: ranking,\n      totalInCategory: totalInCategory,\n      categoryAvg: categoryAvg,\n      diffFromAvg: diffFromAvg,\n      status: status,\n      statusMessage: statusMessage,\n      alternatives: alternatives\n    });\n  }\n}\n\n// סיכום\nreturn {\n  json: {\n    customerInfo: portfolioData.customerInfo,\n    summaryStats: portfolioData.summaryStats,\n    criticalAlerts: portfolioData.criticalAlerts,\n    analyzedTracks: analyzed,\n    recommendations: recommendations,\n    productCodes: PRODUCT_CODES,\n    stats: {\n      totalTracks: analyzed.length,\n      tracksWithAlternatives: analyzed.filter(t => t.alternatives && t.alternatives.length > 0).length,\n      tracksWithMarketData: analyzed.filter(t => t.marketData !== null).length,\n      excellentTracks: analyzed.filter(t => t.status === 'EXCELLENT').length,\n      poorTracks: analyzed.filter(t => t.status === 'POOR' || t.status === 'BELOW_AVG').length\n    }\n  }\n};"
+      },
+      "id": "9edbeca6-0c5a-438c-92b8-7023dd8991c7",
+      "name": "Analyze Performance + Filter Blacklist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== FORMAT HTML REPORT =====\n// גרסה מתוקנת - קודי מוצרים אחידים ותצוגה משופרת\n\nconst data = $input.first().json;\n\n// קודי מוצרים - מתקבלים מהמודול הקודם\nconst PRODUCT_CODES = data.productCodes || {\n  PENSION: [1, 2, 19],\n  GEMEL: [3, 5, 6],\n  GEMEL_INVEST: [4],\n  HISHTALMUT: [7],\n  SAVINGS: [41],\n  INSURANCE: [13, 14, 15]\n};\n\n// לוגואים של חברות\nconst COMPANY_LOGOS = {\n  'מיטב': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzFhMzY2ZCIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+TUI8L3RleHQ+PC9zdmc+',\n  'אנליסט': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzAwNjZjYyIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+QU48L3RleHQ+PC9zdmc+',\n  'הראל': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzAwMzM2NiIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+SFI8L3RleHQ+PC9zdmc+',\n  'הפניקס': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iI2ZmNjYwMCIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+UEg8L3RleHQ+PC9zdmc+',\n  'פניקס': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iI2ZmNjYwMCIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+UEg8L3RleHQ+PC9zdmc+',\n  'מגדל': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzAwNjY5OSIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+TUc8L3RleHQ+PC9zdmc+',\n  'אלטשולר': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzAwMzM2NiIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+QVM8L3RleHQ+PC9zdmc+',\n  'מור': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzMzNjY5OSIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+TVI8L3RleHQ+PC9zdmc+',\n  'הכשרה': 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIyMCIgZmlsbD0iIzAwNjY2NiIvPjx0ZXh0IHg9IjIwIiB5PSIyNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJBcmlhbCI+SEs8L3RleHQ+PC9zdmc+'\n};\n\n// === פונקציות עזר ===\nfunction formatCurrency(num) {\n  const formatted = new Intl.NumberFormat('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(num || 0);\n  return formatted + ' ₪';\n}\n\nfunction formatPercent(num) {\n  if (num === null || num === undefined || isNaN(num)) return '-';\n  return num.toFixed(1) + '%';\n}\n\nfunction calcAverage(arr) {\n  const valid = arr.filter(v => v !== null && v !== undefined && !isNaN(v));\n  if (valid.length === 0) return null;\n  return valid.reduce((sum, v) => sum + v, 0) / valid.length;\n}\n\nfunction getCompanyLogo(companyName) {\n  const name = companyName || '';\n  for (const [key, url] of Object.entries(COMPANY_LOGOS)) {\n    if (name.includes(key)) return url;\n  }\n  return null;\n}\n\nfunction getProductCategory(code) {\n  if (PRODUCT_CODES.PENSION.includes(code)) return 'pension';\n  if (PRODUCT_CODES.GEMEL.includes(code)) return 'gemel';\n  if (PRODUCT_CODES.GEMEL_INVEST.includes(code)) return 'gemel_invest';\n  if (PRODUCT_CODES.HISHTALMUT.includes(code)) return 'hishtalmut';\n  if (PRODUCT_CODES.SAVINGS.includes(code)) return 'savings';\n  if (PRODUCT_CODES.INSURANCE.includes(code)) return 'insurance';\n  return 'other';\n}\n\n// === פונקציות התראות ברמת מוצר ===\nfunction getProductAlerts(productName, productNumber) {\n  const alerts = data.criticalAlerts || [];\n  return alerts.filter(alert => {\n    const matchName = alert.productName && productName && alert.productName.includes(productName);\n    const matchNumber = alert.productNumber && productNumber && alert.productNumber === productNumber;\n    return matchName || matchNumber;\n  });\n}\n\nfunction renderProductAlert(alert) {\n  const severityClass = alert.severity === 'CRITICAL' ? 'alert-critical' : (alert.severity === 'HIGH' ? 'alert-high' : 'alert-medium');\n  const icon = alert.severity === 'CRITICAL' ? '🚨' : '⚠️';\n  return `<tr><td colspan=\"8\" style=\"padding: 0; border: none;\"><div class=\"product-alert ${severityClass}\"><span class=\"product-alert-icon\">${icon}</span><span class=\"product-alert-text\">${alert.message}</span><div class=\"product-alert-action\">${alert.action || ''}</div></div></td></tr>`;\n}\n\n// === קטגוריות לתצוגה ===\nconst categories = {\n  pension: { name: 'קרנות פנסיה', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: true },\n  gemel: { name: 'קופות גמל', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: true },\n  gemel_invest: { name: 'גמל להשקעה', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: false },\n  hishtalmut: { name: 'קרנות השתלמות', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: false },\n  savings: { name: 'פוליסות חיסכון', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: false },\n  insurance: { name: 'ביטוח מנהלים', products: {}, total: 0, exposureSum: 0, exposureCount: 0, isKitzba: true }\n};\n\n// === קיבוץ מוצרים ===\nfor (const track of data.analyzedTracks || []) {\n  const code = track.productTypeCode;\n  const category = getProductCategory(code);\n  const key = track.productNumber || track.productName;\n  \n  if (!categories[category]) continue;\n  \n  if (!categories[category].products[key]) {\n    categories[category].products[key] = {\n      productName: track.productName,\n      productNumber: track.productNumber,\n      companyName: track.companyName || '',\n      accumulationFee: track.accumulationFee,\n      totalAccumulation: 0,\n      tracks: []\n    };\n  }\n  \n  categories[category].products[key].tracks.push(track);\n  categories[category].products[key].totalAccumulation += track.trackAccumulation || 0;\n  categories[category].total += track.trackAccumulation || 0;\n  \n  const exp = track.exposurePercent ?? track.stockExposure ?? track.marketData?.exposure;\n  if (exp !== null && exp !== undefined && !isNaN(exp)) {\n    categories[category].exposureSum += exp * (track.trackAccumulation || 0);\n    categories[category].exposureCount += track.trackAccumulation || 0;\n  }\n}\n\n// === חישוב חשיפות ===\nlet kitzbaTotal = 0, kitzbaExpSum = 0, kitzbaExpCount = 0;\nlet honiTotal = 0, honiExpSum = 0, honiExpCount = 0;\n\nfor (const [key, cat] of Object.entries(categories)) {\n  if (cat.isKitzba) {\n    kitzbaTotal += cat.total;\n    kitzbaExpSum += cat.exposureSum;\n    kitzbaExpCount += cat.exposureCount;\n  } else {\n    honiTotal += cat.total;\n    honiExpSum += cat.exposureSum;\n    honiExpCount += cat.exposureCount;\n  }\n}\n\nconst totalAll = kitzbaTotal + honiTotal;\nconst kitzbaExposure = kitzbaExpCount > 0 ? kitzbaExpSum / kitzbaExpCount : 0;\nconst honiExposure = honiExpCount > 0 ? honiExpSum / honiExpCount : 0;\nconst totalExposure = (kitzbaExpCount + honiExpCount) > 0 ? (kitzbaExpSum + honiExpSum) / (kitzbaExpCount + honiExpCount) : 0;\n\n// === יצירת HTML לקטגוריה ===\nfunction renderCategory(catKey, catData) {\n  const products = Object.values(catData.products);\n  if (products.length === 0) return '';\n  \n  let html = `\n    <div class=\"category-section\">\n      <div class=\"category-header\">\n        <span class=\"category-name\">${catData.name}</span>\n        <span class=\"category-total\">${formatCurrency(catData.total)}</span>\n      </div>\n      <table class=\"data-table\">\n        <thead>\n          <tr>\n            <th style=\"width: 50px\">יצרן</th>\n            <th style=\"width: 20%\">מוצר / מסלול</th>\n            <th style=\"width: 12%\">מס' חשבון</th>\n            <th>יתרה צבורה</th>\n            <th>תשואה YTD</th>\n            <th>תשואה 3 שנים</th>\n            <th>חשיפה</th>\n            <th>ד\"נ</th>\n          </tr>\n        </thead>\n        <tbody>`;\n  \n  for (const product of products) {\n    const pid = catKey + '_' + Math.random().toString(36).substr(2, 9);\n    const fee = product.accumulationFee;\n    const logoUrl = getCompanyLogo(product.companyName || product.productName);\n    \n    const ytdValues = product.tracks.map(t => t.marketData?.ytdYield); // רק מה-API!\n    const return3YValues = product.tracks.map(t => t.marketData?.return3Y);\n    const exposureValues = product.tracks.map(t => t.exposurePercent ?? t.stockExposure ?? t.marketData?.exposure);\n    \n    const avgYtd = calcAverage(ytdValues);\n    const avgReturn3Y = calcAverage(return3YValues);\n    const avgExposure = calcAverage(exposureValues);\n    \n    let expClass = 'exposure-medium';\n    if (avgExposure !== null) {\n      if (avgExposure >= 70) expClass = 'exposure-high';\n      else if (avgExposure <= 30) expClass = 'exposure-low';\n    }\n    \n    const logoHtml = logoUrl \n      ? `<img src=\"${logoUrl}\" class=\"company-logo-img\" alt=\"logo\">`\n      : `<div class=\"company-logo-placeholder\">${(product.companyName || '?')[0]}</div>`;\n    \n    const trackCount = product.tracks.length;\n    const trackCountHtml = trackCount > 1 ? ` <span class=\"track-count\">(${trackCount})</span>` : '';\n    \n    html += `\n          <tr class=\"product-header-row\" onclick=\"toggleProduct('${pid}')\">\n            <td class=\"logo-cell\">${logoHtml}</td>\n            <td>\n              <div class=\"product-header-toggle\">\n                <span class=\"toggle-icon collapsed\" id=\"icon_${pid}\">▼</span>\n                <span class=\"product-header-name\">${product.productName}${trackCountHtml}</span>\n              </div>\n            </td>\n            <td class=\"product-header-number\">${product.productNumber || '-'}</td>\n            <td class=\"product-header-amount\">${formatCurrency(product.totalAccumulation)}</td>\n            <td class=\"product-header-ytd\">${formatPercent(avgYtd)}</td>\n            <td class=\"product-header-3y\">${formatPercent(avgReturn3Y)}</td>\n            <td>${avgExposure !== null ? `<span class=\"exposure ${expClass}\">${avgExposure.toFixed(0)}%</span>` : '-'}</td>\n            <td class=\"product-header-fee\">${fee ? formatPercent(fee) : '-'}</td>\n          </tr>`;\n    \n    // התראות ברמת המוצר - מתחת לשורת המוצר\n    const productAlerts = getProductAlerts(product.productName, product.productNumber);\n    for (const alert of productAlerts) {\n      html += renderProductAlert(alert);\n    }\n    \n    html += `<tbody id=\"${pid}\" class=\"product-tracks hidden\">`;\n    \n    for (const track of product.tracks) {\n      const exp = track.exposurePercent ?? track.stockExposure ?? track.marketData?.exposure;\n      const ytd = track.marketData?.ytdYield; // רק מה-API!\n      const return3Y = track.marketData?.return3Y;\n      \n      let trackExpClass = 'exposure-medium';\n      if (exp !== null && exp !== undefined) {\n        if (exp >= 70) trackExpClass = 'exposure-high';\n        else if (exp <= 30) trackExpClass = 'exposure-low';\n      }\n      \n      html += `\n            <tr class=\"track-row\" onclick=\"toggleTrackDetails(this)\">\n              <td></td>\n              <td class=\"track-name-cell\">\n                <span class=\"track-indent\"></span>\n                <span class=\"track-toggle-icon\">▶</span>\n                ${track.trackName || 'לא ידוע'}\n              </td>\n              <td></td>\n              <td>${formatCurrency(track.trackAccumulation)}</td>\n              <td>${formatPercent(ytd)}</td>\n              <td>${formatPercent(return3Y)}</td>\n              <td>${exp !== null && exp !== undefined ? `<span class=\"exposure ${trackExpClass}\">${exp.toFixed(0)}%</span>` : '-'}</td>\n              <td></td>\n            </tr>`;\n      \n      // פרטי מסלול מורחבים\n      const rank = track.ranking;\n      html += `<tr class=\"track-details-row\">\n              <td colspan=\"8\">\n                <div class=\"track-details-content\">`;\n      \n      // דירוג\n      if (rank && rank.position && rank.total) {\n        const pct = rank.percentile || 0;\n        let rc = 'rank-medium', ri = '📊';\n        if (pct <= 25) { rc = 'rank-excellent'; ri = '🏆'; }\n        else if (pct <= 50) { rc = 'rank-good'; ri = '✅'; }\n        else if (pct > 75) { rc = 'rank-poor'; ri = '⚠️'; }\n        \n        html += `\n                  <div class=\"ranking-box ${rc}\">\n                    <span class=\"rank-icon\">${ri}</span>\n                    <div class=\"rank-info\">\n                      <div class=\"rank-position\">דירוג ${rank.position} מתוך ${rank.total}</div>\n                      <div class=\"rank-diff\">${rank.diffFromAvg >= 0 ? '+' : ''}${formatPercent(rank.diffFromAvg)} מהממוצע</div>\n                    </div>\n                  </div>`;\n      }\n      \n      // חלופות\n      if (track.alternatives && track.alternatives.length > 0) {\n        const hasSameCompany = track.alternatives.some(a => a.sameCompany);\n        const altTitle = hasSameCompany ? '💡 חלופות מומלצות מאותו יצרן:' : '💡 חלופות מומלצות משוק ההון:';\n        html += `<div class=\"alternatives-section\"><div class=\"alternatives-title\">${altTitle}</div>`;\n        for (const alt of track.alternatives) {\n          const sameCompanyBadge = alt.sameCompany ? '<span class=\"same-company-badge\">אותו יצרן</span>' : '';\n          html += `<div class=\"alt-item\"><div><div class=\"alt-name\">${alt.fundName} ${sameCompanyBadge}</div><div class=\"alt-company\">${alt.company}</div></div><div class=\"alt-stats\"><span class=\"alt-yield\">תשואה: ${formatPercent(alt.ytdYield)}</span><span class=\"alt-improvement\">+${formatPercent(alt.improvement)}</span></div></div>`;\n        }\n        html += `</div>`;\n      }\n      \n      html += `</div></td></tr>`;\n    }\n    \n    html += `</tbody>`;\n  }\n  \n  html += `</tbody></table></div>`;\n  return html;\n}\n\n// === בניית ה-HTML ===\nconst currentDate = new Date().toLocaleDateString('he-IL');\nconst customerName = data.customerInfo?.customerName || 'לקוח';\n\n// התראות קריטיות\nlet alertsHtml = '';\nif (data.criticalAlerts && data.criticalAlerts.length > 0) {\n  alertsHtml = `<div class=\"alerts-section\">`;\n  for (const alert of data.criticalAlerts) {\n    const alertClass = alert.severity === 'CRITICAL' ? 'alert-critical' : 'alert-warning';\n    alertsHtml += `\n      <div class=\"alert-box ${alertClass}\">\n        <div class=\"alert-message\">${alert.message}</div>\n        <div class=\"alert-action\">${alert.action}</div>\n      </div>`;\n  }\n  alertsHtml += `</div>`;\n}\n\nconst html = `<!DOCTYPE html>\n<html dir=\"rtl\" lang=\"he\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>WEALTH ANALYSIS - ${customerName}</title>\n    <style>\n        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n        body { font-family: 'Heebo', sans-serif; background: #f5f5f5; color: #2c3e50; line-height: 1.5; font-size: 14px; }\n        .container { max-width: 1050px; margin: 0 auto; background: #fff; padding: 40px; }\n        \n        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 35px; }\n        .customer-info { text-align: right; }\n        .customer-name { font-size: 18px; font-weight: 600; color: #1e3a5f; margin-bottom: 4px; }\n        .report-date { font-size: 13px; color: #6b7c93; }\n        .brand-section { text-align: left; }\n        .brand-title { font-size: 32px; font-weight: 700; color: #c9a227; letter-spacing: 3px; margin-bottom: 2px; }\n        .brand-subtitle { font-size: 11px; color: #c9a227; letter-spacing: 1px; }\n        \n        .alerts-section { margin-bottom: 25px; }\n        .alert-box { padding: 15px 20px; border-radius: 8px; margin-bottom: 10px; }\n        .alert-critical { background: #fdeaea; border-right: 4px solid #dc3545; }\n        .alert-warning { background: #fff3cd; border-right: 4px solid #ffc107; }\n        .alert-message { font-weight: 600; color: #1e3a5f; margin-bottom: 4px; }\n        .alert-action { font-size: 13px; color: #6b7c93; }\n        \n        .summary-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 25px; }\n        .summary-card { border: 1px solid #e8e8e8; border-radius: 8px; padding: 15px; text-align: center; background: #fff; }\n        .summary-card.total { background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); border: none; }\n        .summary-card.total .summary-label { color: rgba(255,255,255,0.8); }\n        .summary-card.total .summary-value { color: #fff; }\n        .summary-label { font-size: 11px; color: #6b7c93; margin-bottom: 6px; }\n        .summary-value { font-size: 16px; font-weight: 700; color: #1e3a5f; }\n        \n        .gauge-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 25px; }\n        .gauge-card { background: #fff; border: 1px solid #e8e8e8; border-radius: 12px; padding: 20px; text-align: center; }\n        .gauge-title { font-size: 13px; color: #6b7c93; margin-bottom: 15px; font-weight: 500; }\n        .gauge-container { position: relative; width: 120px; height: 70px; margin: 0 auto 5px; }\n        .gauge-bg { fill: none; stroke: #e8e8e8; stroke-width: 12; }\n        .gauge-fill { fill: none; stroke-width: 12; stroke-linecap: round; }\n        .gauge-fill.gold { stroke: #c9a227; }\n        .gauge-fill.blue { stroke: #1e3a5f; }\n        .gauge-fill.green { stroke: #2d8a6e; }\n        .gauge-value { font-size: 28px; font-weight: 700; }\n        .gauge-value.gold { color: #c9a227; }\n        .gauge-value.blue { color: #1e3a5f; }\n        .gauge-value.green { color: #2d8a6e; }\n        \n        .category-section { margin-bottom: 25px; border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; }\n        .category-header { background: #1e3a5f; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }\n        .category-name { color: #fff; font-size: 14px; font-weight: 600; }\n        .category-total { color: #c9a227; font-size: 16px; font-weight: 700; }\n        \n        .data-table { width: 100%; border-collapse: collapse; background: #fff; }\n        .data-table th { background: #f8f9fa; padding: 10px 8px; text-align: right; font-weight: 500; color: #6b7c93; font-size: 11px; border-bottom: 1px solid #e8e8e8; white-space: nowrap; }\n        .data-table td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; color: #1e3a5f; font-size: 12px; }\n        \n        .logo-cell { text-align: center; width: 50px; }\n        .company-logo-img { max-width: 40px; max-height: 30px; object-fit: contain; }\n        .company-logo-placeholder { width: 36px; height: 30px; background: #1e3a5f; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; }\n        \n        .product-header-row { background: #f8f9fa; cursor: pointer; transition: background 0.2s; }\n        .product-header-row:hover { background: #f0f1f3; }\n        .product-header-toggle { display: flex; align-items: center; gap: 8px; }\n        .toggle-icon { font-size: 10px; color: #6b7c93; transition: transform 0.2s; width: 14px; display: inline-block; }\n        .toggle-icon.collapsed { transform: rotate(-90deg); }\n        .product-header-name { font-weight: 600; color: #1e3a5f; font-size: 12px; }\n        .track-count { font-size: 10px; color: #6b7c93; font-weight: 400; }\n        .product-header-number { font-size: 10px; color: #6b7c93; font-family: monospace; direction: ltr; text-align: right; white-space: nowrap; }\n        .product-header-amount { font-weight: 700; color: #1e3a5f; font-size: 12px; }\n        .product-header-ytd { font-weight: 600; color: #2d8a6e; }\n        .product-header-3y { font-weight: 600; color: #3b82c4; }\n        .product-header-fee { font-weight: 600; color: #1e3a5f; }\n        \n        .product-tracks { display: table-row-group; }\n        .product-tracks.hidden { display: none; }\n        .track-row { cursor: pointer; transition: background 0.2s; }\n        .track-row:hover { background: #fafbfc; }\n        .track-name-cell { padding-right: 10px !important; }\n        .track-indent { display: inline-block; width: 15px; }\n        .track-toggle-icon { font-size: 8px; color: #6b7c93; margin-left: 6px; transition: transform 0.2s; }\n        .track-row.open .track-toggle-icon { transform: rotate(90deg); }\n        \n        .track-details-row { display: none; background: #fafbfc; }\n        .track-details-row.open { display: table-row; }\n        .track-details-content { padding: 15px 20px 15px 60px; }\n        \n        .exposure { display: inline-block; padding: 3px 8px; border-radius: 20px; font-weight: 600; font-size: 10px; }\n        .exposure-high { background: #fdeaea; color: #d64545; }\n        .exposure-medium { background: #fef4e6; color: #d97706; }\n        .exposure-low { background: #e6f4ea; color: #2d8a6e; }\n        \n        .ranking-box { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; }\n        .ranking-box.rank-excellent { background: #d4edda; border-right: 4px solid #28a745; }\n        .ranking-box.rank-good { background: #fff3cd; border-right: 4px solid #ffc107; }\n        .ranking-box.rank-medium { background: #e8f4fd; border-right: 4px solid #17a2b8; }\n        .ranking-box.rank-poor { background: #f8d7da; border-right: 4px solid #dc3545; }\n        .rank-icon { font-size: 24px; }\n        .rank-info { flex: 1; }\n        .rank-position { font-weight: 600; color: #1e3a5f; font-size: 14px; }\n        .rank-diff { font-size: 12px; color: #6b7c93; }\n        \n        .alternatives-section { margin-top: 10px; }\n        .alternatives-title { font-size: 13px; font-weight: 600; color: #1e3a5f; margin-bottom: 8px; }\n        .alt-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #fff; border: 1px solid #e8e8e8; border-radius: 6px; margin-bottom: 6px; }\n        .alt-name { font-weight: 500; color: #1e3a5f; font-size: 13px; }\n        .alt-company { font-size: 11px; color: #6b7c93; }\n        .alt-stats { display: flex; gap: 12px; align-items: center; }\n        .alt-yield { font-size: 12px; color: #1e3a5f; }\n        .alt-improvement { background: #d4edda; color: #155724; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }\n        .same-company-badge { background: #e8f4fd; color: #0066cc; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 500; margin-right: 6px; }\n        \n        /* Product-level alerts */\n        .product-alert { margin: 8px 15px; padding: 10px 15px; border-radius: 6px; font-size: 12px; }\n        .product-alert.alert-critical { background: #fdeaea; border-right: 3px solid #dc3545; }\n        .product-alert.alert-high { background: #fff3cd; border-right: 3px solid #ffc107; }\n        .product-alert.alert-medium { background: #e8f4fd; border-right: 3px solid #17a2b8; }\n        .product-alert-icon { margin-left: 8px; }\n        .product-alert-text { font-weight: 500; color: #1e3a5f; }\n        .product-alert-action { font-size: 11px; color: #6b7c93; margin-top: 4px; }\n        \n        .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e8e8e8; text-align: center; font-size: 11px; color: #9ca3af; }\n        \n        /* Mobile responsive styles */\n@media screen and (max-width: 768px) {\n.container { padding: 15px; }\n.header { flex-direction: column; gap: 15px; text-align: center; }\n.customer-info { text-align: center; }\n.brand-section { text-align: center; }\n.brand-title { font-size: 24px; letter-spacing: 2px; }\n.summary-row { grid-template-columns: repeat(2, 1fr); }\n.summary-card.total { grid-column: span 2; }\n.gauge-row { grid-template-columns: 1fr; }\n.data-table { font-size: 11px; }\n.data-table th, .data-table td { padding: 6px 4px; }\n.data-table th:nth-child(3), .data-table td:nth-child(3) { display: none; } /* Hide account number on mobile */\n.product-header-name { font-size: 11px; }\n.track-details-content { padding: 10px 15px; }\n.alt-item { flex-direction: column; gap: 8px; align-items: flex-start; }\n.alt-stats { width: 100%; justify-content: space-between; }\n.ranking-box { flex-direction: column; text-align: center; }\n.product-alert { margin: 5px 10px; padding: 8px 12px; font-size: 11px; }\n}\n\n@media print { body { -webkit-print-color-adjust: exact; } .container { padding: 20px; } }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"header\">\n            <div class=\"customer-info\">\n                <div class=\"customer-name\">${customerName}</div>\n                <div class=\"report-date\">תאריך הפקה: ${currentDate}</div>\n            </div>\n            <div class=\"brand-section\">\n                <div class=\"brand-title\">WEALTH ANALYSIS</div>\n                <div class=\"brand-subtitle\">דוח ניתוח תיק פנסיוני מקיף</div>\n            </div>\n        </div>\n        \n        ${alertsHtml}\n        \n        <div class=\"summary-row\">\n            <div class=\"summary-card total\">\n                <div class=\"summary-label\">סה\"כ שווי תיק</div>\n                <div class=\"summary-value\">${formatCurrency(totalAll)}</div>\n            </div>\n            <div class=\"summary-card\">\n                <div class=\"summary-label\">קרנות פנסיה</div>\n                <div class=\"summary-value\">${formatCurrency(categories.pension.total)}</div>\n            </div>\n            <div class=\"summary-card\">\n                <div class=\"summary-label\">קופות גמל</div>\n                <div class=\"summary-value\">${formatCurrency(categories.gemel.total + categories.gemel_invest.total)}</div>\n            </div>\n            <div class=\"summary-card\">\n                <div class=\"summary-label\">קרנות השתלמות</div>\n                <div class=\"summary-value\">${formatCurrency(categories.hishtalmut.total)}</div>\n            </div>\n            <div class=\"summary-card\">\n                <div class=\"summary-label\">חיסכון וביטוח</div>\n                <div class=\"summary-value\">${formatCurrency(categories.savings.total + categories.insurance.total)}</div>\n            </div>\n        </div>\n        \n        <div class=\"gauge-row\">\n            <div class=\"gauge-card\">\n                <div class=\"gauge-title\">חשיפה בנכסים הוניים</div>\n                <div class=\"gauge-container\">\n                    <svg viewBox=\"0 0 120 70\" width=\"120\" height=\"70\">\n                        <path class=\"gauge-bg\" d=\"M 10 60 A 50 50 0 0 1 110 60\" />\n                        <path class=\"gauge-fill green\" d=\"M 10 60 A 50 50 0 0 1 110 60\" \n                              stroke-dasharray=\"157\" \n                              stroke-dashoffset=\"${157 * (1 - honiExposure / 100)}\" />\n                    </svg>\n                </div>\n                <div class=\"gauge-value green\">${honiExposure.toFixed(1)}%</div>\n            </div>\n            <div class=\"gauge-card\">\n                <div class=\"gauge-title\">חשיפה בנכסים קצבתיים</div>\n                <div class=\"gauge-container\">\n                    <svg viewBox=\"0 0 120 70\" width=\"120\" height=\"70\">\n                        <path class=\"gauge-bg\" d=\"M 10 60 A 50 50 0 0 1 110 60\" />\n                        <path class=\"gauge-fill blue\" d=\"M 10 60 A 50 50 0 0 1 110 60\" \n                              stroke-dasharray=\"157\" \n                              stroke-dashoffset=\"${157 * (1 - kitzbaExposure / 100)}\" />\n                    </svg>\n                </div>\n                <div class=\"gauge-value blue\">${kitzbaExposure.toFixed(1)}%</div>\n            </div>\n            <div class=\"gauge-card\">\n                <div class=\"gauge-title\">חשיפה כוללת למניות</div>\n                <div class=\"gauge-container\">\n                    <svg viewBox=\"0 0 120 70\" width=\"120\" height=\"70\">\n                        <path class=\"gauge-bg\" d=\"M 10 60 A 50 50 0 0 1 110 60\" />\n                        <path class=\"gauge-fill gold\" d=\"M 10 60 A 50 50 0 0 1 110 60\" \n                              stroke-dasharray=\"157\" \n                              stroke-dashoffset=\"${157 * (1 - totalExposure / 100)}\" />\n                    </svg>\n                </div>\n                <div class=\"gauge-value gold\">${totalExposure.toFixed(1)}%</div>\n            </div>\n        </div>\n        \n        ${renderCategory('pension', categories.pension)}\n        ${renderCategory('gemel', categories.gemel)}\n        ${renderCategory('gemel_invest', categories.gemel_invest)}\n        ${renderCategory('hishtalmut', categories.hishtalmut)}\n        ${renderCategory('savings', categories.savings)}\n        ${renderCategory('insurance', categories.insurance)}\n        \n        <div class=\"footer\">\n            הדוח הופק אוטומטית | מקורות: data.gov.il, Surense | אין לראות בדוח זה המלצה פנסיונית - יש להתייעץ עם יועץ מורשה\n        </div>\n    </div>\n    \n    <script>\n        function toggleProduct(id) {\n            const tracks = document.getElementById(id);\n            const icon = document.getElementById('icon_' + id);\n            if (tracks) {\n                tracks.classList.toggle('hidden');\n                icon.classList.toggle('collapsed');\n            }\n        }\n        \n        function toggleTrackDetails(row) {\n            row.classList.toggle('open');\n            const next = row.nextElementSibling;\n            if (next && next.classList.contains('track-details-row')) {\n                next.classList.toggle('open');\n            }\n        }\n    </script>\n</body>\n</html>`;\n\nreturn { \n  json: { \n    htmlReport: html, \n    customerInfo: data.customerInfo,\n    stats: data.stats\n  } \n};"
+      },
+      "id": "44dd7b10-2ee5-4982-8843-e1874841d182",
+      "name": "Format HTML Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.htmlReport }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "75181bbf-1e88-4ff5-af2e-d84cbd4f724a",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1856,
+        -48
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Portfolio + Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Portfolio + Alerts": {
+      "main": [
+        [
+          {
+            "node": "If Gemel Net Needed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Pension Net Needed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Bituach Net Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Gemel Net Needed": {
+      "main": [
+        [
+          {
+            "node": "Split Gemel Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Pension Net Needed": {
+      "main": [
+        [
+          {
+            "node": "Split Pension Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Bituach Net Needed": {
+      "main": [
+        [
+          {
+            "node": "Split Bituach Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Gemel Tracks": {
+      "main": [
+        [
+          {
+            "node": "Gemel Net API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Pension Tracks": {
+      "main": [
+        [
+          {
+            "node": "Pension Net API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Bituach Tracks": {
+      "main": [
+        [
+          {
+            "node": "Bituach Net API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemel Net API": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemel Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pension Net API": {
+      "main": [
+        [
+          {
+            "node": "Parse Pension Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bituach Net API": {
+      "main": [
+        [
+          {
+            "node": "Parse Bituach Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemel Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Pension Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Market Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse Bituach Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Market Data",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Market Data": {
+      "main": [
+        [
+          {
+            "node": "Analyze Performance + Filter Blacklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Performance + Filter Blacklist": {
+      "main": [
+        [
+          {
+            "node": "Format HTML Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format HTML Report": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "7c979953-b8e4-4405-a5ab-59fffdfa5e22",
+  "meta": {
+    "instanceId": "a67fb24ecbe47c6e08c2fdf5ea395bdba57595d4c3709dd5131ed1819ad339bf"
+  },
+  "id": "YsOU7lculRNBRZfWfUebT",
+  "tags": []
+}
