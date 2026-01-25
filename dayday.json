@@ -314,74 +314,6 @@
         43296,
         32336
       ]
-    },
-    {
-      "parameters": {
-        "mode": "manual",
-        "duplicateItem": false,
-        "assignments": {
-          "assignments": [
-            {
-              "id": "ba9510ae-a8f1-4852-80d3-4ea69f57b32a",
-              "name": "marketTrendsText",
-              "value": "🇮🇱 ישראל פותחת את 2026 בעוצמה: ת\"א-125 עלה 4.7%, ת\"א-90 זינק 5.6%. השקל התחזק ל-3.15 ש\"ח. בנק ישראל הוריד ריבית ל-4% עם תחזית ל-3.5% בשנה הקרובה.\n\n🇺🇸 ארה\"ב: S&P 500 עלה 1.6%, נאסד\"ק 1.9%. שוק העבודה חלש עם 50 אלף משרות בדצמבר.\n\n📌 המסר: עם ירידת הריבית - האג\"ח חוזר להיות אלטרנטיבה משמעותית.",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
-        "options": {}
-      },
-      "id": "88d9d051-b6a8-441c-bfd2-4e685572b6fc",
-      "name": "Market Trends",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        33144,
-        30624
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Create company API calls from track results\nconst trackResults = $('Parse Bituach Results').all();\nconst companyCallsMap = new Map();\n\nfor (const item of trackResults) {\n  const track = item.json;\n  const parentCompanyLegalId = track.parentCompanyLegalId;\n  const fundClassification = track.fundClassification;\n  \n  if (parentCompanyLegalId && !companyCallsMap.has(parentCompanyLegalId)) {\n    companyCallsMap.set(parentCompanyLegalId, {\n      parentCompanyLegalId,\n      companyName: track.managingCorp || track.companyName,\n      fundClassification,\n      productTypeCode: track.productTypeCode,\n      customerTrackCodes: [String(track.trackCode)],\n      apiUrl: 'https://data.gov.il/api/3/action/datastore_search?resource_id=c6c62cc7-fe02-4b18-8f3e-813abfbb4647&filters=' + encodeURIComponent(JSON.stringify({ PARENT_COMPANY_LEGAL_ID: parentCompanyLegalId, FUND_CLASSIFICATION: fundClassification })) + '&sort=REPORT_PERIOD%20desc&limit=100'\n    });\n  } else if (parentCompanyLegalId) {\n    const existing = companyCallsMap.get(parentCompanyLegalId);\n    if (!existing.customerTrackCodes.includes(String(track.trackCode))) {\n      existing.customerTrackCodes.push(String(track.trackCode));\n    }\n  }\n}\n\nconst calls = Array.from(companyCallsMap.values());\nreturn calls.length > 0 ? calls.map(c => ({ json: c })) : [{ json: { noCompanyCalls: true } }];"
-      },
-      "id": "465404b6-6361-4ff0-bf76-cea8aa17b72b",
-      "name": "Create Company Calls",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        32750,
-        31100
-      ]
-    },
-    {
-      "parameters": {
-        "url": "={{ $json.apiUrl }}",
-        "options": {
-          "timeout": 15000
-        }
-      },
-      "id": "df07ea82-3ef6-4266-9ae8-92b34f1a0f21",
-      "name": "Bituach Company API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        32950,
-        31100
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Build Bituach Recommendations - like GemelNet logic\nconst results = [];\nconst trackResults = $('Parse Bituach Results').all().map(i => i.json);\nconst companyInputs = $('Create Company Calls').all();\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const item = $input.all()[i];\n  const companyInfo = companyInputs[i]?.json || {};\n  \n  if (companyInfo.noCompanyCalls) continue;\n  \n  const records = item.json?.result?.records || [];\n  const customerTrackCodes = companyInfo.customerTrackCodes || [];\n  \n  // Build allTracks from company records (latest per FUND_ID)\n  const latestByFundId = {};\n  for (const rec of records) {\n    const fundId = String(rec.FUND_ID);\n    if (!latestByFundId[fundId] || rec.REPORT_PERIOD > latestByFundId[fundId].REPORT_PERIOD) {\n      latestByFundId[fundId] = rec;\n    }\n  }\n  \n  const allTracks = Object.values(latestByFundId).map(rec => {\n    const assets = parseFloat(rec.TOTAL_ASSETS || 1);\n    const exposure = parseFloat(rec.STOCK_MARKET_EXPOSURE || 0);\n    return {\n      fundId: String(rec.FUND_ID),\n      fundName: rec.FUND_NAME || '',\n      ytdYield: parseFloat(rec.YEAR_TO_DATE_YIELD || 0),\n      yield3Y: parseFloat(rec.AVG_ANNUAL_YIELD_TRAILING_3YRS || 0),\n      stockExposure: assets > 0 ? (exposure / assets) * 100 : 0,\n      totalAssets: assets,\n      managingCorp: rec.MANAGING_CORPORATION || rec.PARENT_COMPANY_NAME || '',\n      fundClassification: rec.FUND_CLASSIFICATION || '',\n      mgmtFee: parseFloat(rec.AVG_ANNUAL_MANAGEMENT_FEE || 0)\n    };\n  });\n  \n  // Sort by yield (high to low)\n  allTracks.sort((a, b) => b.ytdYield - a.ytdYield);\n  \n  // Top 3\n  const top3 = allTracks.slice(0, 3).map((t, idx) => ({ ...t, rank: idx + 1 }));\n  \n  // For each customer track, build recommendations\n  for (const trackCode of customerTrackCodes) {\n    const originalTrack = trackResults.find(t => String(t.trackCode) === trackCode);\n    if (!originalTrack) continue;\n    \n    const companyTrack = allTracks.find(t => t.fundId === trackCode);\n    const rankIndex = allTracks.findIndex(t => t.fundId === trackCode);\n    const ranking = rankIndex >= 0 ? rankIndex + 1 : null;\n    \n    // Alert logic: not in top 3 + similar exposure (±15%) + yield diff >= 7%\n    let hasAlert = false;\n    let betterTrack = null;\n    \n    const currentExposure = originalTrack.stockExposure || companyTrack?.stockExposure || 0;\n    const currentYield = originalTrack.ytdYield || 0;\n    \n    if (ranking > 3) {\n      for (const track of allTracks) {\n        if (track.fundId === trackCode) continue;\n        const exposureDiff = Math.abs(track.stockExposure - currentExposure);\n        const yieldDiff = track.ytdYield - currentYield;\n        \n        if (exposureDiff <= 15 && yieldDiff >= 7) {\n          hasAlert = true;\n          betterTrack = track;\n          break;\n        }\n      }\n    }\n    \n    results.push({\n      json: {\n        ...originalTrack,\n        ranking,\n        totalTracks: allTracks.length,\n        top3,\n        allTracks,\n        hasAlert,\n        betterTrack,\n        source: 'BITUACHNET'\n      }\n    });\n  }\n}\n\n// Add any tracks without company data (pass through)\nfor (const track of trackResults) {\n  const alreadyProcessed = results.some(r => String(r.json.trackCode) === String(track.trackCode));\n  if (!alreadyProcessed) {\n    results.push({\n      json: {\n        ...track,\n        ranking: null,\n        totalTracks: null,\n        top3: [],\n        allTracks: [],\n        hasAlert: false,\n        betterTrack: null\n      }\n    });\n  }\n}\n\nreturn results;"
-      },
-      "id": "57c6b85e-bc16-4dda-8a01-4cb32536af5e",
-      "name": "Build Bituach Recommendations",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        33150,
-        31100
-      ]
     }
   ],
   "pinData": {},
@@ -631,50 +563,6 @@
             "node": "Respond",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "Market Trends": {
-      "main": [
-        [
-          {
-            "node": "Format HTML Report",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Company Calls": {
-      "main": [
-        [
-          {
-            "node": "Bituach Company API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Bituach Company API": {
-      "main": [
-        [
-          {
-            "node": "Build Bituach Recommendations",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Bituach Recommendations": {
-      "main": [
-        [
-          {
-            "node": "Merge Market Data",
-            "type": "main",
-            "index": 2
           }
         ]
       ]
